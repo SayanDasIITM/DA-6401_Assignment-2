@@ -1,10 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
-
-# 
-
----
-
-# no write it in code format plzz
 
 ```markdown
 # DA6401 Assignment 2: CNN from Scratch and Fine-Tuning with Wandb Integration
