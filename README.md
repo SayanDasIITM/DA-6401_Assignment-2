@@ -146,9 +146,4 @@ $1- **W&B Report**: [Comprehensive report for both Part A & Part B](https://wand
   - Checkpoint files (`.ckpt`) for best validation accuracy.
   - wandb dashboard with training curves.
 
-## License
-*MIT License* — See [LICENSE](LICENSE) for details.
-
-## Contact
-For questions or issues, please open an issue or contact the maintainer.
 
