@@ -1,202 +1,154 @@
+# Image Classification with PyTorch Lightning and Fine‑Tuning ResNet50
 
-```markdown
-# DA6401 Assignment 2: CNN from Scratch and Fine-Tuning with Wandb Integration
+## Overview
+This repository contains two scripts for image classification:
 
-This repository contains an implementation of two deep learning approaches for the DA6401 assignment:
-1. **Part A:** Training a custom Convolutional Neural Network (CNN) from scratch on the iNaturalist dataset.
-2. **Part B:** Fine-tuning a pre-trained model (from torchvision) using various fine-tuning strategies.
+- **PartA.py**: Defines and trains a custom Convolutional Neural Network (CNN) from scratch on the iNaturalist dataset using PyTorch Lightning, with support for single runs and hyperparameter sweeps via Weights & Biases (wandb).
+- **PartB.py**: Fine‑tunes a pretrained ResNet50 backbone on a custom dataset, exploring multiple strategies (freeze_all, freeze_last_k, full_finetuning, gradual_unfreeze).
 
-In addition, the code includes:
-- Theoretical computation of FLOPs and parameter count.
-- Visualization functions for filters, test predictions, and (optionally) guided backpropagation for selected neurons.
-- Integration with [Weights & Biases (wandb)](https://wandb.ai) for experiment tracking and hyperparameter sweeps.
-
-## Table of Contents
-- [Requirements](#requirements)
-- [Dataset Setup](#dataset-setup)
-- [Installation](#installation)
-- [Code Structure](#code-structure)
-- [Usage](#usage)
-  - [Running Part A (Custom CNN)](#running-part-a-custom-cnn)
-  - [Running Part B (Fine-Tuning)](#running-part-b-fine-tuning)
-  - [Guided Backpropagation Visualization](#guided-backpropagation-visualization)
-  - [Wandb Sweeps](#wandb-sweeps)
-- [Visualizations](#visualizations)
-- [Report and Analysis](#report-and-analysis)
-- [License](#license)
-
-## Requirements
-- Python 3.7 or higher
-- PyTorch
-- Torchvision
-- Wandb
-- Matplotlib
-- Numpy
-
-## Dataset Setup
-The code assumes that the iNaturalist dataset is organized in the following folder structure:
+## Repository Structure
+```
+├── PartA.py            # Training CNN from scratch with wandb integration and sweeps
+├── PartB.py            # Fine‑tuning pretrained ResNet50 with Lightning
+├── data/               # Dataset root (user-provided)
+│   ├── train/          # Training images (class subfolders)
+│   ├── val/            # Validation images (for PartB)
+│   └── test/           # Test images (for PartA)
+├── requirements.txt    # Python dependencies
+└── README.md           # This documentation
 ```
 
-./inat/train/<class_name>/...
-./inat/test/<class_name>/...
-
-```
-
-Place your dataset accordingly before running the code.
+## Prerequisites
+- **OS**: Linux/macOS/Windows
+- **Python**: 3.8 or higher
+- **Hardware**: GPU recommended (CUDA-enabled)
+- **Disk**: Sufficient space for dataset and model artifacts
 
 ## Installation
-1. **Clone the repository:**
-```
+1. Clone the repository:
+   ```bash
+   git clone <repository_url>
+   cd <repository_dir>
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate    # macOS/Linux
+   venv\Scripts\activate     # Windows
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-git clone https://github.com/<your-username>/da6401_assignment2.git
-cd da6401_assignment2
+> **requirements.txt** should include:
+> ```
+> torch             # PyTorch
+> torchvision       # Computer vision utils
+> pytorch-lightning # Trainer and LightningModule
+> wandb             # Experiment tracking
+> pandas            # Logging hyperparameters
+> matplotlib        # Plotting test grids
+> plotly-express    # Interactive visualization (optional)
+> pillow            # Image processing
+> ```
 
-```
+## Data Preparation
+- **PartA** expects:
+  ```
+  data_dir/
+  ├── train/    # subfolders per class, images
+  └── test/     # subfolders per class, images
+  ```
+  Validation set is automatically split from `train/` (20% per class).
 
-2. **Create and activate a virtual environment (optional but recommended):**
-```
+- **PartB** expects:
+  ```
+  data_dir/
+  ├── train/    # subfolders per class, images
+  └── val/      # subfolders per class, images
+  ```
 
-python -m venv venv
-source venv/bin/activate  \# On Windows: venv\Scripts\activate
-
-```
-
-3. **Install required packages:**
-```
-
-pip install torch torchvision wandb matplotlib numpy
-
-```
-
-4. **Log in to wandb:**
-```
-
-wandb login
-
-```
-
-## Code Structure
-- **assignment_code.py**:
-Main script that implements both Part A (custom CNN) and Part B (fine-tuning) with comprehensive visualization and theoretical computation functions.
-
-- **README.md**:
-This documentation file.
-
-The code is organized into the following sections:
-
-- **Model Definitions**:
-CustomCNN and functions to load pre-trained models.
-
-- **Theoretical Computations**:
-Functions to compute FLOPs and parameter count.
-
-- **Data Preparation**:
-Functions to load the iNaturalist dataset using the ImageFolder structure.
-
-- **Visualizations**:
-Functions to visualize filters, test predictions grid, and guided backpropagation.
-
-- **Training & Evaluation**:
-Functions to train and evaluate the model.
-
-- **Wandb Integration & Sweeps**:
-Code is integrated with wandb using wandb.config. A YAML sweep configuration template is included in the comments.
+Ensure the directory structure matches above before running.
 
 ## Usage
 
-### Running Part A (Custom CNN)
-To train a custom CNN from scratch (Part A):
+### Part A: Training CNN from Scratch
 
+#### Single Run
+Train a single model with specified hyperparameters:
+```bash
+python PartA.py \
+  --run_mode single \
+  --max_epochs 30 \
+  --lr 0.001 \
+  --batch_size 32 \
+  --num_filters 32 \
+  --kernel_size 3 \
+  --activation relu \
+  --dropout 0.1 \
+  --batchnorm True \
+  --hidden_sizes 128 64 \
+  --augmentation True \
+  --filter_organization same \
+  --img_height 224 \
+  --img_width 224 \
+  --num_workers 4 \
+  --num_conv_layers 5 \
+  --use_checkpoint False \
+  --accumulation_steps 4 \
+  --data_dir ./data \
+  --precision 16-mixed
+```
+- Logs metrics (`train_loss`, `val_loss`, `train_acc`, `val_acc`) to wandb.
+- Saves test prediction grid (`test_predictions_grid.png`).
+- Default uses CPU unless `--gpus` > 0 and CUDA available.
+
+#### Hyperparameter Sweep
+Run a Bayesian sweep over predefined ranges:
+```bash
+python PartA.py --run_mode sweep --sweep_count 20 --data_dir ./data
+```
+- Uses wandb Bayesian sweeps (lr, dropout, activation, etc.).
+- `sweep_count` controls number of trials.
+- Results logged under `iNat_assignment` project in wandb.
+
+### Part B: Fine‑Tuning ResNet50
+
+```bash
+python PartB.py \
+  --data_dir ./data \
+  --batch_size 32 \
+  --epochs 20 \
+  --lr 1e-3 \
+  --finetune_strategy freeze_all \
+  --freeze_last_k 20 \
+  --wandb_project fine_tuning_project \
+  --use_fp16
 ```
 
-python assignment_code.py --part partA
+- **Strategies**:
+  - `freeze_all`: only final classifier is trained.
+  - `freeze_last_k`: last _k_ parameter groups unfrozen.
+  - `full_finetuning`: all layers trainable with layer‑wise LRs.
+  - `gradual_unfreeze`: unfreeze backbone layers gradually after epoch 5.
 
-```
+- Model checkpoints saved on best `val_acc`.
+- Early stopping on `val_acc` patience = 5.
 
-You can also specify additional hyperparameters; for example:
+$1- **W&B Report**: [Comprehensive report for both Part A & Part B](https://wandb.ai/cs24m044-iit-madras-alumni-association/iNat_assignment/reports/DA6401-Assignment-2--VmlldzoxMjIxNjQwNg/edit?draftId=VmlldzoxMjIxODg4OA%3D%3D)
 
-```
-
-python assignment_code.py --part partA --epochs 20 --batch_size 64 --lr 0.001 --num_conv_blocks 5 --filters 32 64 128 256 512 --activations relu relu relu relu relu --dense_neurons 256
-
-```
-
-### Running Part B (Fine-Tuning)
-To fine-tune a pre-trained model (e.g., ResNet50) with a chosen fine-tuning strategy (e.g., "last_two"):
-
-```
-
-python assignment_code.py --part partB --model_name resnet50 --finetune_strategy last_two
-
-```
-
-Available pre-trained models include:
-- resnet18
-- resnet50
-- vgg16
-- efficientnet_b0
-- googlenet
-- inception_v3
-- vit_base_patch16_224
-
-And available fine-tuning strategies:
-- last (freeze all layers except the final classifier)
-- last_two (for ResNet-like models, unfreeze the last block and final classifier)
-- all (fine-tune the entire network)
-
-### Guided Backpropagation Visualization
-To generate guided backpropagation visualizations for exactly 10 neurons from the last convolutional layer (CONV5) of the custom CNN, run:
-
-```
-
-python assignment_code.py --part partA --guided_backprop
-
-```
-
-This will save a visualization image (guided_backprop.png) showing gradients for 10 selected neurons.
-
-### Wandb Sweeps
-The code supports hyperparameter sweeps via wandb. A sample sweep configuration template is provided in the code comments. To run a sweep:
-
-1. Create a YAML file (e.g., sweep_config.yaml) using the provided template.
-
-2. Start the sweep:
-```
-
-wandb sweep sweep_config.yaml
-
-```
-
-3. Launch an agent with the returned sweep ID:
-```
-
-wandb agent <sweep_id>
-
-```
-
-The sweep will override hyperparameters using wandb.config.
-
-## Visualizations
-The code automatically saves the following visualizations:
-
-- **Filter Visualization**:
-Saves the first layer filters to filters.png.
-
-- **Test Predictions Grid**:
-Saves a 10×3 grid of test images with predictions to test_predictions.png.
-
-- **Guided Backpropagation (Optional)**:
-If enabled via --guided_backprop, saves the guided backpropagation visualization as guided_backprop.png.
-
-## Report and Analysis
-All metrics and model statistics are logged to wandb. Use the wandb dashboard to generate:
-- Accuracy vs. Created plots.
-- Parallel coordinates plots.
-- Correlation summary tables.
-
-Include these plots in your report along with your insights and analysis as required by the assignment.
+## Outputs
+- **PartA**:
+  - `test_predictions_grid.png`
+  - wandb run artifacts: filter visualization, guided backprop images, hyperparameter tables.
+- **PartB**:
+  - Checkpoint files (`.ckpt`) for best validation accuracy.
+  - wandb dashboard with training curves.
 
 ## License
-This project is provided for educational purposes. Please cite appropriately if you reuse any part of the code.
-```
+*MIT License* — See [LICENSE](LICENSE) for details.
+
+## Contact
+For questions or issues, please open an issue or contact the maintainer.
 
