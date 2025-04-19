@@ -177,7 +177,7 @@ class CNNModel(pl.LightningModule):
             hidden += [nn.Linear(in_f, h), get_activation(self.activation)]
             in_f = h
         self.hidden_layers = nn.Sequential(*hidden)
-        self.out = nn.Linear(in_f, 111)
+        self.out = nn.Linear(in_f, 10)
 
         try:
             self = torch.compile(self)
