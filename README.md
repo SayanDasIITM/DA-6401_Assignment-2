@@ -136,7 +136,7 @@ python PartB.py \
 - Model checkpoints saved on best `val_acc`.
 - Early stopping on `val_acc` patience = 5.
 
-$1- **W&B Report**: [Comprehensive report for both Part A & Part B](https://wandb.ai/cs24m044-iit-madras-alumni-association/iNat_assignment/reports/DA6401-Assignment-2--VmlldzoxMjIxNjQwNg/edit?draftId=VmlldzoxMjIxODg4OA%3D%3D)
+$1- **W&B Report**: [Comprehensive report for both Part A & Part B]([https://wandb.ai/cs24m044-iit-madras-alumni-association/iNat_assignment/reports/DA6401-Assignment-2--VmlldzoxMjIxNjQwNg/edit?draftId=VmlldzoxMjIxODg4OA%3D%3D](https://wandb.ai/cs24m044-iit-madras-alumni-association/iNat_assignment/reports/DA6401-Assignment-2--VmlldzoxMjIxNjQwNg?accessToken=wzwlrobmdquve68ukl7jd5qncm8xxpdr11960mz23awqicdlygwz38y0knqcaw6e))
 
 ## Outputs
 - **PartA**:
