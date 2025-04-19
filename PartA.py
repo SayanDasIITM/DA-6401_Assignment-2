@@ -1,7 +1,17 @@
 import os
+
+# === Redirect all temp file usage to a local "wandb-media" folder in cwd ===
+cwd = os.getcwd()
+tmpdir = os.path.join(cwd, "wandb-media")
+os.makedirs(tmpdir, exist_ok=True)
+for env_var in ("TMP", "TEMP", "TMPDIR"):
+    os.environ[env_var] = tmpdir
+
 # Use threads for wandb internal operations to reduce interference with DataLoader workers.
 os.environ["WANDB_START_METHOD"] = "thread"
+
 from PIL import Image
+import numpy as np
 
 import math
 import time
@@ -288,8 +298,8 @@ class INatDataModule(pl.LightningDataModule):
             v_idx.extend([idxs[i] for i in perm[:n_val]])
             t_idx.extend([idxs[i] for i in perm[n_val:]])
         self.train_ds = Subset(tr, t_idx)
-        self.val_ds = Subset(tr, v_idx)
-        self.test_ds = datasets.ImageFolder(os.path.join(self.data_dir, "test"), tf_test)
+        self.val_ds   = Subset(tr, v_idx)
+        self.test_ds  = datasets.ImageFolder(os.path.join(self.data_dir, "test"), tf_test)
 
     def train_dataloader(self):
         persistent = self.num_workers > 0
@@ -355,13 +365,13 @@ def generate_simple_test_grid(model, dm, rows=10, cols=3):
     # Create matplotlib figure for local save
     fig, axes = plt.subplots(rows, cols, figsize=(15, 40))
     axes = axes.flatten()
-    for i, (img, pred, label) in enumerate(zip(all_imgs, all_preds, all_labels)):
+    for i, (img, pred, lbl) in enumerate(zip(all_imgs, all_preds, all_labels)):
         img_np = img.permute(1, 2, 0).numpy()
         img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min())
         axes[i].imshow(img_np)
-        is_correct = (pred == label)
+        is_correct = (pred == lbl)
         title_color = 'green' if is_correct else 'red'
-        axes[i].set_title(f"Pred: {pred.item()} | True: {label.item()}", color=title_color)
+        axes[i].set_title(f"Pred: {pred.item()} | True: {lbl.item()}", color=title_color)
         axes[i].axis('off')
         if not is_correct:
             for spine in axes[i].spines.values():
@@ -375,14 +385,13 @@ def generate_simple_test_grid(model, dm, rows=10, cols=3):
     plt.savefig("test_predictions_grid.png", dpi=300, bbox_inches='tight')
     plt.close(fig)
 
-    # Also log a PIL version to wandb:
+    # Also log to wandb using numpy array (stores in local tmpdir)
     grid = utils.make_grid(all_imgs, nrow=cols, normalize=True)
     np_img = (grid.mul(255).permute(1, 2, 0).byte().cpu().numpy())
-    pil_img = Image.fromarray(np_img)
-    captions = [f"P:{p.item()} {'✓' if p==l else '✗'} T:{l.item()}" 
+    captions = [f"P:{p.item()} {'✓' if p==l else '✗'} T:{l.item()}"
                 for p, l in zip(all_preds, all_labels)]
     wandb.log({
-        "Test_Grid_Matplotlib": wandb.Image(pil_img, caption=f"Acc {acc*100:.2f}% — " + " | ".join(captions))
+        "Test_Grid_Matplotlib": wandb.Image(np_img, caption=f"Acc {acc*100:.2f}% — " + " | ".join(captions))
     })
     return grid
 
@@ -395,9 +404,8 @@ def generate_test_grid(model, dm, rows=10, cols=3):
     table = wandb.Table(columns=["image", "predicted", "confidence", "actual"])
     count = 0
 
-    # Inverse normalization for correct colors
     mean = torch.tensor([0.485, 0.456, 0.406])
-    std = torch.tensor([0.229, 0.224, 0.225])
+    std  = torch.tensor([0.229, 0.224, 0.225])
     inv_norm = transforms.Normalize(
         mean=(-mean / std).tolist(),
         std=(1.0 / std).tolist()
@@ -413,14 +421,13 @@ def generate_test_grid(model, dm, rows=10, cols=3):
             confs = probs[range(len(preds)), preds]
 
             for img_tensor, pred, conf, true in zip(xb.cpu(), preds, confs, yb):
-                # undo preprocessing
                 img = inv_norm(img_tensor)
                 img = torch.clamp(img, 0, 1)
                 pil = to_pil(img)
 
-                # add to table
+                np_img = np.array(pil)
                 table.add_data(
-                    wandb.Image(pil, caption=f"P:{pred} ({conf:.2f}) / T:{true}"),
+                    wandb.Image(np_img, caption=f"P:{pred} ({conf:.2f}) / T:{true}"),
                     pred.item(),
                     float(conf),
                     true.item()
@@ -432,14 +439,12 @@ def generate_test_grid(model, dm, rows=10, cols=3):
             if count >= rows * cols:
                 break
 
-    # log the interactive table and scalar accuracy
     acc = sum(r[1] == r[3] for r in table.data) / len(table.data)
     wandb.log({
         "Interactive_Test_Results": table,
         "test_accuracy": acc
     })
     return table
-
 
 def log_additional(config, acc):
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
@@ -454,10 +459,6 @@ def log_additional(config, acc):
     tbl = wandb.Table(columns=keys)
     tbl.add_data(*[config.get(k) for k in keys])
     wandb.log({"Hyperparams": tbl})
-
-# -------------------------------
-# Experiment runner.
-# -------------------------------
 
 def run_experiment(args):
     hyper_keys = [
@@ -483,13 +484,8 @@ def run_experiment(args):
         f"conv_layers={config['num_conv_layers']}_acc={config['accumulation_steps']}_"
         f"epochs={config['max_epochs']}"
     )
-
     if not in_sweep_mode and wandb.run is None:
-        wandb.init(
-            project="iNat_assignment",
-            config=config,
-            name=run_name
-        )
+        wandb.init(project="iNat_assignment", config=config, name=run_name)
         config = dict(wandb.config)
     else:
         if wandb.run is not None:
@@ -512,8 +508,6 @@ def run_experiment(args):
         "precision": args.precision,
         "accumulate_grad_batches": config["accumulation_steps"],
     }
-
-    print(f"Trainer kwargs max_epochs: {trainer_kwargs['max_epochs']}")
 
     if torch.cuda.is_available() and args.gpus > 0:
         trainer_kwargs.update(accelerator="gpu", devices=args.gpus)
@@ -564,48 +558,29 @@ def run_experiment(args):
         if wandb.run is not None:
             wandb.finish()
 
-# -------------------------------
-# Top-level Sweep Run Function (for a single sweep job).
-# -------------------------------
 def sweep_run(args, sweep_id):
     if wandb.run is None:
         wandb.init(project="iNat_assignment")
-
     sweep_config = dict(wandb.config)
-    print(f"Original sweep_config: {sweep_config}")
-
     for k, v in sweep_config.items():
         setattr(args, k, v)
-
     args.run_mode = "sweep_job"
-    print("Sweep job config:", sweep_config, f"(Process {os.getpid()})")
-
     run_experiment(args)
 
-# -------------------------------
-# Main entry point.
-# -------------------------------
 def main():
     base_parser = argparse.ArgumentParser(add_help=False)
-    base_parser.add_argument("--run_mode", choices=["single", "sweep"], required=True,
-                             help="Choose 'single' for one run, or 'sweep' for sequential sweeps.")
+    base_parser.add_argument("--run_mode", choices=["single", "sweep"], required=True)
     base_parser.add_argument("--sweep_count", type=int, default=10)
     base_parser.add_argument("--data_dir", default="./iNat_dataset")
     base_parser.add_argument("--only_test", action="store_true")
     base_parser.add_argument("--test_batch_size", type=int, default=None)
     base_parser.add_argument("--gpus", type=int, default=torch.cuda.device_count())
-    base_parser.add_argument("--num_cpus", type=int, default=os.cpu_count() or 4)
     base_parser.add_argument("--precision", choices=["32", "16-mixed"], default="16-mixed")
 
-    args, remaining = base_parser.parse_known_args()
-
+    args, _ = base_parser.parse_known_args()
     parser = argparse.ArgumentParser(parents=[base_parser])
     if args.run_mode == "single":
-        parser.add_argument("--max_epochs", "--epochs", type=int, required=True, dest="max_epochs")
-    else:
-        parser.add_argument("--max_epochs", "--epochs", type=int, default=20, dest="max_epochs")
-
-    if args.run_mode == "single":
+        parser.add_argument("--max_epochs", "--epochs", type=int, required=True)
         parser.add_argument("--lr", type=float, required=True)
         parser.add_argument("--batch_size", type=int, required=True)
         parser.add_argument("--num_filters", type=int, required=True)
@@ -614,9 +589,8 @@ def main():
         parser.add_argument("--dropout", type=float, required=True)
         parser.add_argument("--batchnorm", type=lambda x: str(x).lower() == "true", required=True)
         parser.add_argument("--hidden_sizes", type=int, nargs="+", required=True)
-        parser.add_argument("--augmentation", type=str2bool, nargs='?', const=True, required=True,
-                            help="Set to true to enable data augmentation; false otherwise.")
-        parser.add_argument("--filter_organization", choices=["same", "double", "half"], required=True)
+        parser.add_argument("--augmentation", type=str2bool, nargs='?', const=True, required=True)
+        parser.add_argument("--filter_organization", choices=["same","double","half"], required=True)
         parser.add_argument("--img_height", type=int, required=True)
         parser.add_argument("--img_width", type=int, required=True)
         parser.add_argument("--num_workers", type=int, required=True)
@@ -624,6 +598,7 @@ def main():
         parser.add_argument("--use_checkpoint", type=lambda x: str(x).lower() == "true", required=True)
         parser.add_argument("--accumulation_steps", type=int, required=True)
     else:
+        parser.add_argument("--max_epochs", "--epochs", type=int, default=20)
         parser.add_argument("--lr", type=float, default=0.001)
         parser.add_argument("--batch_size", type=int, default=32)
         parser.add_argument("--num_filters", type=int, default=32)
@@ -632,9 +607,8 @@ def main():
         parser.add_argument("--dropout", type=float, default=0.0)
         parser.add_argument("--batchnorm", type=lambda x: str(x).lower() == "true", default=False)
         parser.add_argument("--hidden_sizes", type=int, nargs="+", default=[128])
-        parser.add_argument("--augmentation", type=str2bool, nargs='?', const=True, default=True,
-                            help="Set to true to enable data augmentation; false otherwise.")
-        parser.add_argument("--filter_organization", choices=["same", "double", "half"], default="same")
+        parser.add_argument("--augmentation", type=str2bool, nargs='?', const=True, default=True)
+        parser.add_argument("--filter_organization", choices=["same","double","half"], default="same")
         parser.add_argument("--img_height", type=int, default=224)
         parser.add_argument("--img_width", type=int, default=224)
         parser.add_argument("--num_workers", type=int, default=4)
@@ -643,39 +617,33 @@ def main():
         parser.add_argument("--accumulation_steps", type=int, default=4)
 
     args = parser.parse_args()
-
     if args.run_mode == "sweep":
         sweep_config = {
             "method": "bayes",
             "metric": {"name": "test_acc", "goal": "maximize"},
             "parameters": {
-                "lr":                {"values": [0.0005, 0.001]},
-                "batch_size":        {"values": [32]},
-                "num_filters":       {"values": [64]},
-                "kernel_size":       {"values": [3]},
-                "activation":        {"values": ["mish", "gelu"]},
-                "dropout":           {"values": [0.1, 0.2]},
-                "batchnorm":         {"values": [True]},
-                "hidden_sizes":      {"values": [[256, 128]]},
-                "filter_organization":{"values": ["double"]},
-                "augmentation":      {"values": [True]},
-                # Fixed dataset / training parameters:
-                "img_height":        {"value": 224},
-                "img_width":         {"value": 224},
-                "num_workers":       {"value": 4},
-                "num_conv_layers":   {"value": 5},
-                "use_checkpoint":    {"values": [False]},
-                "accumulation_steps":{"values": [4]},
-                "max_epochs":        {"value": 20}
+                "lr": {"values": [0.0005, 0.001]},
+                "batch_size": {"values": [32]},
+                "num_filters": {"values": [64]},
+                "kernel_size": {"values": [3]},
+                "activation": {"values": ["mish","gelu"]},
+                "dropout": {"values": [0.1, 0.2]},
+                "batchnorm": {"values": [True]},
+                "hidden_sizes": {"values": [[256,128]]},
+                "filter_organization": {"values": ["double"]},
+                "augmentation": {"values": [True]},
+                "img_height": {"value": 224},
+                "img_width": {"value": 224},
+                "num_workers": {"value": 4},
+                "num_conv_layers": {"value": 5},
+                "use_checkpoint": {"values": [False]},
+                "accumulation_steps": {"values": [4]},
+                "max_epochs": {"value": 20}
             },
             "program": "PartA.py"
         }
-
         sweep_id = wandb.sweep(sweep_config, project="iNat_assignment")
-        sweep_runner = partial(sweep_run, args, sweep_id)
-        print(f"Starting agent for sweep {sweep_id} with count {args.sweep_count}")
-        wandb.agent(sweep_id, function=sweep_runner, count=args.sweep_count)
-        print("Agent completed")
+        wandb.agent(sweep_id, function=partial(sweep_run, args, sweep_id), count=args.sweep_count)
     else:
         run_experiment(args)
 
